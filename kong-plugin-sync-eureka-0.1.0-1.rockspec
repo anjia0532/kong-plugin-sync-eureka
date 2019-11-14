@@ -1,4 +1,4 @@
-package = "sync_eureka"  -- TODO: rename, must match the info in the filename of this rockspec!
+package = "kong-plugin-sync-eureka"  -- TODO: rename, must match the info in the filename of this rockspec!
                                   -- as a convention; stick to the prefix: `kong-plugin-`
 version = "0.1.0-1"               -- TODO: renumber, must match the info in the filename of this rockspec!
 -- The version '0.1.0' is the source code version, the trailing '1' is the version of this rockspec.
@@ -7,17 +7,20 @@ version = "0.1.0-1"               -- TODO: renumber, must match the info in the 
 
 -- TODO: This is the name to set in the Kong configuration `plugins` setting.
 -- Here we extract it from the package name.
-local pluginName = "sync_eureka"
+local pluginName = "sync-eureka"
 
 supported_platforms = {"linux", "macosx"}
 source = {
-  url = "http://github.com/anjia/sync_eureka.git",
+  url = "https://github.com/anjia0532/kong-plugin-sync-eureka.git",
   tag = "0.1.0"
 }
 
 description = {
-  summary = "Kong is a scalable and customizable API Management Layer built on top of Nginx.",
-  homepage = "http://getkong.org",
+  summary = "a plugin of kong to sync from eureka application instances register to kong server",
+  detailed = [[
+    sync eureka application instances register to kong server
+  ]],
+  homepage = "https://github.com/anjia0532/kong-plugin-sync-eureka",
   license = "Apache 2.0"
 }
 
