@@ -1,13 +1,13 @@
 rockspec_format = "3.0"
 package = "kong-plugin-sync-eureka"
 
-version = "0.2.0-1"
+version = "0.2.0-4"
 
 local pluginName = "sync-eureka"
 
 supported_platforms = {"linux", "macosx"}
 source = {
-  url = "https://github.com/anjia0532/kong-plugin-sync-eureka",
+  url = "git://github.com/anjia0532/kong-plugin-sync-eureka",
   tag = "0.2.0"
 }
 
@@ -17,7 +17,7 @@ description = {
     sync eureka application instances register to kong server
   ]],
   homepage = "https://github.com/anjia0532/kong-plugin-sync-eureka",
-  license = "Apache 2.0",
+  license = "BSD",
   labels = { "kong", "kong-plugin", "openresty" , "eureka"}
 }
 
