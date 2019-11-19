@@ -4,7 +4,7 @@ kong-plugin-sync-eureka
 Prerequisites
 ---
 - [Kong >=1.4.0](https://github.com/Kong/kong/releases/tag/1.4.0)
-- Eureka v1 endpoint( curl -H "Accept:application/json" http://eureka:8761/eureka/apps )
+- Eureka v1 endpoint( `curl -H "Accept:application/json" http://eureka:8761/eureka/apps` )
 
 Quickstart
 ---
@@ -12,23 +12,16 @@ Quickstart
 ```bash
 $ luarocks install kong-plugin-sync-eureka
 
-$ export plugins = bundled,sync-eureka
-
+$ export plugins=bundled,sync-eureka
 $ kong restart
-
 $ curl -H "Content-Type: application/json" -X POST  --data '{"config":{"sync_interval":10,"eureka_url":"http://eureka:8761/eureka","clean_target_interval":86400},"name":"sync-eureka"}' http://127.0.0.1:8001/plugins
-
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/plugins/
 
 #wait and check
 
-
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/services/
-
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/routes/
-
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/upstreams/
-
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/upstreams/{upstream host:port or id}/targets/
 
 ```
@@ -49,6 +42,13 @@ References
 
 [Kong/kong-vagrant](https://github.com/Kong/kong-vagrant)
 
+[微服务 API 网关 Kong 插件开发 - 安装/卸载插件](https://git.102no.com/2019/05/05/kong-plugin-distribution/)
+
+[quancheng-ec/eureka-kong-register](https://github.com/quancheng-ec/eureka-kong-register)
+
+[048-使用Kong替换Zuul(从Eureka同步列表)](https://juejin.im/post/5dd25fcff265da0bbe51093f)
+
+[049-Kong1.4 vs SC Gateway2.2 vs Zuul1.3 性能测试](https://juejin.im/post/5dd26053f265da0bbe510940)
 
 Copyright and License
 ---
