@@ -1,14 +1,14 @@
 rockspec_format = "3.0"
 package = "kong-plugin-sync-eureka"
 
-version = "0.3.0-1"
+version = "1.0.0-1"
 
 local pluginName = "sync-eureka"
 
 supported_platforms = {"linux", "macosx"}
 source = {
   url = "git://github.com/anjia0532/kong-plugin-sync-eureka",
-  tag = "0.2.0"
+  tag = "1.0.0"
 }
 
 description = {
