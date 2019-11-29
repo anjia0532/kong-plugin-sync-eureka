@@ -23,6 +23,7 @@ local SyncEurekaHandler = {}
 SyncEurekaHandler.PRIORITY = 1000
 SyncEurekaHandler.VERSION = "1.0.0"
 
+--- fetch eureka applications info
 local function eureka_apps()
     LOG_INFO("start fetch eureka apps")
     if not sync_eureka_plugin then
@@ -60,7 +61,7 @@ local function eureka_apps()
         app_list[name] = {}
         for _, it in pairs(item["instance"]) do
             local host, _ = ngx_re.split(it["homePageUrl"], "/")
-            app_list[name][host[3]] = true
+            app_list[name][host[3]] = it['status'] == 'UP'
             app_list[name]["health_path"] =
                 string.sub(it["healthCheckUrl"], string.len(it["homePageUrl"]))
         end
@@ -69,6 +70,8 @@ local function eureka_apps()
     LOG_DEBUG("end to fetch eureka apps,total of ", #app_list, "apps")
     return app_list
 end
+
+--- get kong admin api listeners default is 127.0.0.1:8001
 local function get_admin_listen()
     for _, item in pairs(singletons.configuration.admin_listeners) do
         if not item['ssl'] then
@@ -78,6 +81,11 @@ local function get_admin_listen()
     end
     return nil
 end
+
+--- http client of kong admin api
+---@param method string http method like GET,POST,PUT,DELETE ...
+---@param path string uri of path like /test
+---@param body table request body
 local function admin_client(method, path, body)
     if not admin_host then admin_host = get_admin_listen() end
     local httpc = http.new()
@@ -89,33 +97,41 @@ local function admin_client(method, path, body)
         keepalive_pool = 10
     }
     LOG_DEBUG("send admin request,uri:", path, ",method:", method, "body:", body)
-    if METHOD_POST == method then req["body"] = cjson.encode(body) end
+    if METHOD_POST == method and body then req["body"] = cjson.encode(body) end
     return httpc:request_uri(admin_host .. path, req)
 end
 
-local function parse_resp(type, res, err, cache_key)
+--- parse response
+---@param type string type of operation
+---@param res table response of request
+---@param err string error message
+---@param cache_key string cache key
+local function parse_resp(type, resp, err, cache_key)
     -- created success status is 201
     -- query success status is 200
     -- 409 is conflict
     -- query routes and targets ,status is 200 ,may be data is empty list
-    if res and (res.status <= 201 or res.status == 409) then
-        if res.status == 200 then
-            local data = cjson.decode(res.body)["data"]
+    if resp and (resp.status <= 201 or resp.status == 409) then
+        if resp.status == 200 then
+            local data = cjson.decode(resp.body)["data"]
             if data and #data == 0 then return "ok", nil end
         end
         kong_cache:safe_set(cache_key, true, cache_exptime)
         return "ok", nil
     end
-    if not res or res.status >= 400 then
-        LOG_ERROR(res.body)
+    if not resp or resp.status >= 400 then
+        LOG_ERROR(resp.body)
         LOG_ERROR(
             "[" .. type .. "]failed to create kong request: http err msg:", err,
-            ", http code:", res.status, ", cache_key:", cache_key,
-            ",response body:", res.body)
+            ", http code:", resp.status, ", cache_key:", cache_key,
+            ",response body:", resp.body)
         return nil, "failed to create kong " .. type
     end
     return "ok", nil
 end
+
+--- create service by app name
+---@param name string app name
 local function create_service(name)
     local cache_key = "sync_eureka_apps:service:" .. name
     if kong_cache:get(cache_key) then return "ok", nil end
@@ -133,6 +149,8 @@ local function create_service(name)
     parse_resp("service", res, err, cache_key)
 end
 
+--- create route by app name
+---@param name string app name
 local function create_route(name)
     local cache_key = "sync_eureka_apps:route:" .. name
     if kong_cache:get(cache_key) then return "ok", nil end
@@ -150,6 +168,10 @@ local function create_route(name)
     })
     parse_resp("route", res, err, cache_key)
 end
+
+--- create upstream by appname
+---@param name string app name
+---@param item table object of eureka's instance
 local function create_upstream(name, item)
 
     local cache_key = "sync_eureka_apps:upstream:" .. name
@@ -166,6 +188,7 @@ local function create_upstream(name, item)
     res, err = admin_client(METHOD_POST, "/upstreams", {
         name = name .. eureka_suffix,
         healthchecks = {
+            -- active check
             active = {
                 http_path = item["health_path"],
                 timeout = 5,
@@ -177,6 +200,7 @@ local function create_upstream(name, item)
                     timeouts = 5
                 }
             },
+            -- passive check
             passive = {
                 unhealthy = {http_failures = 2, tcp_failures = 2, timeouts = 5},
                 healthy = {successes = 3}
@@ -185,6 +209,10 @@ local function create_upstream(name, item)
     })
     parse_resp("upstream", res, err, cache_key)
 end
+
+--- get targets by upstream name
+---@param name string upstream name
+---@param target_next string url of next targets page
 local function get_targets(name, target_next)
 
     local res, err = admin_client(METHOD_GET, target_next, nil)
@@ -212,6 +240,10 @@ local function get_targets(name, target_next)
     end
     return targets, nil
 end
+
+--- add target to upstream
+---@param name string app name
+---@param target string app host:port
 local function add_target(name, target)
 
     local cache_key = "sync_eureka_apps:target:" .. name .. ":" .. target
@@ -241,6 +273,28 @@ local function add_target(name, target)
                             {target = target})
     parse_resp("target", res, err, cache_key)
 end
+
+---delete unhealthy instance target
+---@param name string app name
+---@param target string app host:port
+local function delete_target(name, target)
+
+    local cache_key = "sync_eureka_apps:target:" .. name .. ":" .. target
+    local kong_cache_key = "sync_eureka_apps:kong:target:" .. name .. ":" ..
+                               target
+
+    LOG_WARN("[delete target]: upstream name :", name .. eureka_suffix,
+             " ,target:", target)
+    kong_cache:safe_set(cache_key, nil)
+    kong_cache:safe_set(kong_cache_key, nil)
+
+    admin_client(METHOD_DELETE, "/upstreams/" .. name .. eureka_suffix ..
+                     "/targets/" .. target, nil)
+
+end
+
+--- fetch kong's upstream
+---@param upstream_next string url of next upstream page
 local function kong_upstreams(upstream_next)
 
     LOG_DEBUG("[fetch kong's upstream]: path:", upstream_next or "/upstreams")
@@ -267,21 +321,7 @@ local function kong_upstreams(upstream_next)
     return upstreams
 end
 
-local function delete_target(name, target)
-
-    local cache_key = "sync_eureka_apps:target:" .. name .. ":" .. target
-    local kong_cache_key = "sync_eureka_apps:kong:target:" .. name .. ":" ..
-                               target
-
-    LOG_WARN("[delete target]: upstream name :", name .. eureka_suffix,
-             " ,target:", target)
-    kong_cache:safe_set(cache_key, nil)
-    kong_cache:safe_set(kong_cache_key, nil)
-
-    admin_client(METHOD_DELETE, "/upstreams/" .. name .. eureka_suffix ..
-                     "/targets/" .. target, nil)
-
-end
+--- cron job to cleanup invalid targets
 local function cleanup_targets()
     LOG_DEBUG("cron job to cleanup invalid targets")
     sync_eureka_plugin = plugins:select_by_cache_key("plugins:sync-eureka::::")
@@ -293,11 +333,11 @@ local function cleanup_targets()
             get_targets(name, "/upstreams/" .. up_name .. "/targets") or {}
         -- delete all targets by this upstream name
         if not app_list[name] then
-            for target, app_name in pairs(targets) do
+            for target, _ in pairs(targets) do
                 delete_target(name, target)
             end
         else
-            for target, app_name in pairs(targets) do
+            for target, _ in pairs(targets) do
                 -- delete this target
                 if not app_list[name][target] then
                     delete_target(name, target)
@@ -306,6 +346,8 @@ local function cleanup_targets()
         end
     end
 end
+
+--- cron job to fetch apps from eureka server
 local function sync_job()
     LOG_INFO("cron job to fetch apps from eureka server")
     sync_eureka_plugin = plugins:select_by_cache_key("plugins:sync-eureka::::")
@@ -321,9 +363,13 @@ local function sync_job()
             create_upstream(name, item)
         end
 
-        for target, flag in pairs(item) do
-            if target ~= "health_path" and flag then
-                add_target(name, target)
+        for target, healthy in pairs(item) do
+            if target ~= "health_path" then
+                if healthy then
+                    add_target(name, target)
+                else
+                    delete_target(name, target)
+                end
             end
         end
         cache_app_list[name] = true
@@ -331,6 +377,8 @@ local function sync_job()
     kong_cache:safe_set("sync_eureka_apps", cjson.encode(cache_app_list),
                         cache_exptime)
 end
+
+--- init worker
 function SyncEurekaHandler:init_worker()
     if 0 ~= ngx.worker.id() then return end
 
