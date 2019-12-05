@@ -1,7 +1,7 @@
 rockspec_format = "3.0"
 package = "kong-plugin-sync-eureka"
 
-version = "1.1.0-2"
+version = "1.1.0-3"
 
 local pluginName = "sync-eureka"
 
