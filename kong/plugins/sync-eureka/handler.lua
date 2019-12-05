@@ -19,13 +19,21 @@ local LOG_ERROR = kong.log.err
 local LOG_WARN = kong.log.warn
 
 local SyncEurekaHandler = {}
+-- https://github.com/Netflix/eureka/wiki/Eureka-REST-operations
+local status_weitht = {
+    ["UP"] = 100,
+    ["DOWN"] = 1,
+    ["STARTING"] = 0,
+    ["OUT_OF_SERVICE"] = 0,
+    ["UNKNOWN"] = 1
+}
 
 SyncEurekaHandler.PRIORITY = 1000
 SyncEurekaHandler.VERSION = "1.0.0"
 
 --- fetch eureka applications info
-local function eureka_apps()
-    LOG_INFO("start fetch eureka apps")
+local function eureka_apps(app_name)
+    LOG_INFO("start fetch eureka apps [ ", app_name or "all", " ]")
     if not sync_eureka_plugin then
         return nil, 'failed to query plugin config'
     end
@@ -33,7 +41,8 @@ local function eureka_apps()
                        sync_eureka_plugin["config"] or nil
 
     local httpc = http.new()
-    local res, err = httpc:request_uri(config["eureka_url"] .. "/apps", {
+    local res, err = httpc:request_uri(config["eureka_url"] .. "/apps/" ..
+                                           (app_name or ''), {
         method = METHOD_GET,
         headers = {["Accept"] = "application/json"},
         keepalive_timeout = 60,
@@ -48,26 +57,32 @@ local function eureka_apps()
 
     --[[
       convert to app_list
+      -- https://github.com/Netflix/eureka/wiki/Eureka-REST-operations
     {
       "demo":{
-        "192.168.0.10:8080"=true,
+        "192.168.0.10:8080"="UP",
         "health_path"="/health"
       }
     }
   ]]
+
+    if app_name then
+        apps = {["applications"] = {["application"] = {apps["application"]}}}
+    end
+
     local app_list = {}
     for _, item in pairs(apps["applications"]["application"]) do
         local name = string.lower(item["name"])
         app_list[name] = {}
         for _, it in pairs(item["instance"]) do
             local host, _ = ngx_re.split(it["homePageUrl"], "/")
-            app_list[name][host[3]] = it['status'] == 'UP'
+            app_list[name][host[3]] = it['status']
             app_list[name]["health_path"] =
                 string.sub(it["healthCheckUrl"], string.len(it["homePageUrl"]))
         end
     end
 
-    LOG_DEBUG("end to fetch eureka apps,total of ", #app_list, "apps")
+    LOG_DEBUG("end to fetch eureka apps,total of ", #app_list, " apps")
     return app_list
 end
 
@@ -182,29 +197,23 @@ local function create_upstream(name, item)
     local res, err = admin_client(METHOD_GET,
                                   "/upstreams/" .. name .. eureka_suffix, nil)
     parse_resp("upstream", res, err, cache_key)
+    if kong_cache:get(cache_key) then return "ok", nil end
 
     LOG_DEBUG("[create upstream]:new route,we need to create this upstream:",
               name)
     res, err = admin_client(METHOD_POST, "/upstreams", {
         name = name .. eureka_suffix,
         healthchecks = {
-            -- active check
-            active = {
-                http_path = item["health_path"],
-                timeout = 5,
-                healthy = {interval = 10, successes = 3},
-                unhealthy = {
-                    http_failures = 2,
-                    interval = 5,
-                    tcp_failures = 2,
-                    timeouts = 5
-                }
-            },
             -- passive check
             passive = {
-                unhealthy = {http_failures = 2, tcp_failures = 2, timeouts = 5},
+                unhealthy = {
+                    http_failures = 10,
+                    timeouts = 40,
+                    http_statuses = {503, 504}
+                },
                 healthy = {successes = 3}
             }
+
         }
     })
     parse_resp("upstream", res, err, cache_key)
@@ -222,9 +231,9 @@ local function get_targets(name, target_next)
         LOG_DEBUG("[get targets]:path:", target_next, " ,length:",
                   #target_resp["data"])
         for _, item in pairs(target_resp["data"]) do
-            local kong_cache_key = "sync_eureka_apps:kong:target:" .. name ..
-                                       ":" .. item["target"]
-            targets[item["target"]] = name
+            local kong_cache_key = "sync_eureka_apps:target:" .. name .. ":" ..
+                                       item["target"]
+            targets[item["target"]] = item["weight"]
             kong_cache:safe_set(kong_cache_key, true, cache_exptime * 30)
         end
         if ngx.null ~= target_resp["next"] then
@@ -241,56 +250,52 @@ local function get_targets(name, target_next)
     return targets, nil
 end
 
---- add target to upstream
----@param name string app name
----@param target string app host:port
-local function add_target(name, target)
-
-    local cache_key = "sync_eureka_apps:target:" .. name .. ":" .. target
-    local kong_cache_key = "sync_eureka_apps:kong:target:" .. name .. ":" ..
-                               target
-
-    local kong_item = kong_cache:get(kong_cache_key)
-    if kong_cache:get(cache_key) then
-        if not kong_item then
-            kong_cache:safe_set(kong_cache_key, true, cache_exptime * 30)
-        end
-        return "ok", nil
-    end
-    local res, err
-    if not kong_item then
-        get_targets(name, "/upstreams/" .. name .. eureka_suffix .. "/targets")
-    end
-    kong_item = kong_cache:get(kong_cache_key)
-    if kong_item then
-        kong_cache:safe_set(cache_key, true, cache_exptime)
-        return "ok", nil
-    end
-
-    LOG_DEBUG("[add target]: name:", name, " ,target:", target)
-    res, err = admin_client(METHOD_POST,
-                            "/upstreams/" .. name .. eureka_suffix .. "/targets",
-                            {target = target})
-    parse_resp("target", res, err, cache_key)
-end
-
 ---delete unhealthy instance target
 ---@param name string app name
 ---@param target string app host:port
 local function delete_target(name, target)
 
     local cache_key = "sync_eureka_apps:target:" .. name .. ":" .. target
-    local kong_cache_key = "sync_eureka_apps:kong:target:" .. name .. ":" ..
-                               target
 
     LOG_WARN("[delete target]: upstream name :", name .. eureka_suffix,
              " ,target:", target)
     kong_cache:safe_set(cache_key, nil)
-    kong_cache:safe_set(kong_cache_key, nil)
 
     admin_client(METHOD_DELETE, "/upstreams/" .. name .. eureka_suffix ..
                      "/targets/" .. target, nil)
 
+end
+
+--- add target to upstream
+---@param name string app name
+---@param target string app host:port
+---@param weight integer 0-1000 default 100 
+---@param tags table tags  
+local function put_target(name, target, weight, tags)
+
+    -- get_targets use(fetch targets)
+    local cache_key = "sync_eureka_apps:target:" .. name .. ":" .. target
+
+    local targets = get_targets(name, "/upstreams/" .. name .. eureka_suffix ..
+                                    "/targets")
+    if not targets then return nil, "targets is nil" end
+    weight = weight or 0
+    local kong_weight = targets[target] or 0
+    if weight ~= kong_weight then
+        delete_target(name, target)
+        if weight == 0 then return "ok", nil end
+    else
+        return "ok", nil
+    end
+
+    LOG_DEBUG("[add target]: name:", name, " ,target:", target)
+    local res, err = admin_client(METHOD_POST, "/upstreams/" .. name ..
+                                      eureka_suffix .. "/targets", {
+        target = target,
+        weight = weight or 1,
+        tags = tags or {}
+    })
+    parse_resp("target", res, err, cache_key)
 end
 
 --- fetch kong's upstream
@@ -322,12 +327,12 @@ local function kong_upstreams(upstream_next)
 end
 
 --- cron job to cleanup invalid targets
-local function cleanup_targets()
+SyncEurekaHandler.cleanup_targets = function()
     LOG_DEBUG("cron job to cleanup invalid targets")
     sync_eureka_plugin = plugins:select_by_cache_key("plugins:sync-eureka::::")
     if not sync_eureka_plugin then return end
     local app_list = eureka_apps()
-    local upstreams = kong_upstreams()
+    local upstreams = kong_upstreams() or {}
     for up_name, name in pairs(upstreams) do
         local targets =
             get_targets(name, "/upstreams/" .. up_name .. "/targets") or {}
@@ -348,14 +353,15 @@ local function cleanup_targets()
 end
 
 --- cron job to fetch apps from eureka server
-local function sync_job()
-    LOG_INFO("cron job to fetch apps from eureka server")
+SyncEurekaHandler.sync_job = function(app_name)
+    LOG_INFO("cron job to fetch apps from eureka server [ ", app_name or "all",
+             " ]")
     sync_eureka_plugin = plugins:select_by_cache_key("plugins:sync-eureka::::")
     if not sync_eureka_plugin then return end
 
     local cache_app_list = kong_cache:get("sync_eureka_apps") or "{}"
     cache_app_list = cjson.decode(cache_app_list)
-    local app_list = eureka_apps()
+    local app_list = eureka_apps(app_name)
     for name, item in pairs(app_list) do
         if not cache_app_list[name] then
             create_service(name)
@@ -363,16 +369,12 @@ local function sync_job()
             create_upstream(name, item)
         end
 
-        for target, healthy in pairs(item) do
+        cache_app_list[name] = true
+        for target, status in pairs(item) do
             if target ~= "health_path" then
-                if healthy then
-                    add_target(name, target)
-                else
-                    delete_target(name, target)
-                end
+                put_target(name, target, status_weitht[status], {status})
             end
         end
-        cache_app_list[name] = true
     end
     kong_cache:safe_set("sync_eureka_apps", cjson.encode(cache_app_list),
                         cache_exptime)
@@ -389,14 +391,14 @@ function SyncEurekaHandler:init_worker()
     if sync_eureka_plugin and sync_eureka_plugin["enabled"] then
         local ok, err = ngx.timer.every(
                             sync_eureka_plugin["config"]["sync_interval"],
-                            sync_job)
+                            SyncEurekaHandler.sync_job)
         if not ok then
             LOG_ERROR("failed to create the timer: ", err)
             return
         end
         local ok, err = ngx.timer.every(
                             sync_eureka_plugin["config"]["clean_target_interval"],
-                            cleanup_targets)
+                            SyncEurekaHandler.cleanup_targets)
         if not ok then
             LOG_ERROR("failed to create the timer: ", err)
             return
