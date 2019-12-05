@@ -118,7 +118,7 @@ end
 
 --- parse response
 ---@param type string type of operation
----@param res table response of request
+---@param resp table response of request
 ---@param err string error message
 ---@param cache_key string cache key
 local function parse_resp(type, resp, err, cache_key)
@@ -281,9 +281,16 @@ local function put_target(name, target, weight, tags)
     if not targets then return nil, "targets is nil" end
     weight = weight or 0
     local kong_weight = targets[target] or 0
+    
     if weight ~= kong_weight then
-        delete_target(name, target)
-        if weight == 0 then return "ok", nil end
+      -- kong not have this target
+        if kong_weight ~= 0 then delete_target(name, target) end
+        -- weight == 0 means starting and out_of_service
+        -- kong_weight == 0 means this target not in kong upstream
+        -- weight == 100 means eureka status is up
+        if weight == 0 or (kong_weight == 0 and weight ~= 100) then
+            return "ok", nil
+        end
     else
         return "ok", nil
     end
@@ -344,7 +351,7 @@ SyncEurekaHandler.cleanup_targets = function()
         else
             for target, _ in pairs(targets) do
                 -- delete this target
-                if not app_list[name][target] then
+                if app_list[name][target] ~= "UP" then
                     delete_target(name, target)
                 end
             end
@@ -366,7 +373,7 @@ SyncEurekaHandler.sync_job = function(app_name)
         if not cache_app_list[name] then
             create_service(name)
             create_route(name)
-            create_upstream(name, item)
+            create_upstream(name)
         end
 
         cache_app_list[name] = true
