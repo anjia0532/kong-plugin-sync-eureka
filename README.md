@@ -24,6 +24,14 @@ $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/routes/
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/upstreams/
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/upstreams/{upstream host:port or id}/targets/
 
+
+# since v1.1.0
+# /eureka/sync/ sync all apps
+# /eureka/sync/app_name sync one
+$ curl -H "Content-Type: application/json" -X POST http://127.0.0.1:8001/eureka/sync/[{app}]
+# clean invalid targets
+$ curl -H "Content-Type: application/json" -X POST http://127.0.0.1:8001/eureka/clean-targets
+
 ```
 
 Note
