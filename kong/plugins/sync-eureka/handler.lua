@@ -71,10 +71,18 @@ local function eureka_apps(app_name)
     end
 
     local app_list = {}
-    for _, item in pairs(apps["applications"]["application"]) do
+    local applications = apps["applications"]["application"]
+    if table.getn(applications) == 0 then
+        applications = {apps["applications"]["application"]}
+    end
+    for _, item in ipairs(applications) do
         local name = string.lower(item["name"])
         app_list[name] = {}
-        for _, it in pairs(item["instance"]) do
+        local instances = item["instance"]
+        if table.getn(instances) == 0 then
+            instances = {item["instance"]}
+        end
+        for _, it in ipairs(instances) do
             local host, _ = ngx_re.split(it["homePageUrl"], "/")
             app_list[name][host[3]] = it['status']
             app_list[name]["health_path"] =
