@@ -42,7 +42,7 @@ local function eureka_apps(app_name)
 
     local httpc = http.new()
     local res, err = httpc:request_uri(config["eureka_url"] .. "/apps/" ..
-                                           (app_name or ''), {
+                                           (app_name or ""), {
         method = METHOD_GET,
         headers = {["Accept"] = "application/json"},
         keepalive_timeout = 60,
@@ -71,14 +71,23 @@ local function eureka_apps(app_name)
     end
 
     local app_list = {}
-    for _, item in pairs(apps["applications"]["application"]) do
+    local applications = apps["applications"]["application"]
+    if table.getn(applications) == 0 then
+        applications = {apps["applications"]["application"]}
+    end
+    for _, item in ipairs(applications) do
         local name = string.lower(item["name"])
         app_list[name] = {}
-        for _, it in pairs(item["instance"]) do
-            local host, _ = ngx_re.split(it["homePageUrl"], "/")
-            app_list[name][host[3]] = it['status']
-            app_list[name]["health_path"] =
-                string.sub(it["healthCheckUrl"], string.len(it["homePageUrl"]))
+        local instances = item["instance"]
+        if table.getn(instances) == 0 then
+            instances = {item["instance"]}
+        end
+        for _, it in ipairs(instances) do
+            local host = it["hostName"]
+            app_list[name][host] = it["status"]
+            --local host, _ = ngx_re.split(it["homePageUrl"], "/")
+            --app_list[name][host[3]] = it['status']
+            --app_list[name]["health_path"] = string.sub(it["healthCheckUrl"], string.len(it["homePageUrl"]))
         end
     end
 
@@ -89,9 +98,9 @@ end
 --- get kong admin api listeners default is 127.0.0.1:8001
 local function get_admin_listen()
     for _, item in pairs(singletons.configuration.admin_listeners) do
-        if not item['ssl'] then
+        if not item["ssl"] then
             if "0.0.0.0" == item["ip"] then item["ip"] = "127.0.0.1" end
-            return "http://" .. item["ip"] .. ":" .. item['port']
+            return "http://" .. item["ip"] .. ":" .. item["port"]
         end
     end
     return nil
