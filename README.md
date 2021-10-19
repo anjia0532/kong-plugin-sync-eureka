@@ -1,6 +1,9 @@
 kong-plugin-sync-eureka
 ---
 
+# Move to 
+https://github.com/anjia0532/discovery-syncer
+
 Prerequisites
 ---
 - [Kong >=1.4.0](https://github.com/Kong/kong/releases/tag/1.4.0)
@@ -17,7 +20,7 @@ $ kong restart
 $ curl -H "Content-Type: application/json" -X POST  --data '{"config":{"sync_interval":10,"eureka_url":"http://eureka:8761/eureka","clean_target_interval":86400},"name":"sync-eureka"}' http://127.0.0.1:8001/plugins
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/plugins/
 
-#wait and check
+# wait and check
 
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/services/
 $ curl -H "Content-Type: application/json" -X GET http://127.0.0.1:8001/routes/
